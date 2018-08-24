@@ -29,6 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
 import cv2 as cv
+import numpy as np
 #import math
 
 # Basic model parameters as external flags.
@@ -82,6 +83,43 @@ def un_avg_pool(name, l_input, k, images_placeholder, test_images):
   output = tf.convert_to_tensor(output_array)
   return output
 
+def un_max_pool(name, l_input, l_output, k, images_placeholder, test_images):
+  '''
+  parameters:
+    l_input is the input of pool
+    l_output is the output of pool
+    according to input,we can get the max index
+    according to output and max_index, unpool and reconstruct the input 
+  return:
+    the reconstructed input
+  '''
+  input_shape = l_input.get_shape().as_list()
+  output_shape = l_output.get_shape().as_list()
+  batch_size = output_shape[0]
+  length = output_shape[1]
+  rows = output_shape[2]
+  cols = output_shape[3]
+  channels = output_shape[4]
+  input_array = l_input.eval(session = sess,feed_dict={images_placeholder:test_images})
+  output_array = l_output.eval(session = sess,feed_dict = {images_placeholder:test_images})
+  unpool_array = np.zeros(input_shape,dtype = np.float32)
+  for n in range(batch_size):
+    for l in range(length):
+      for r in range(rows):
+        for c in range(cols):
+          for ch in range(channels):
+            l_in, r_in, c_in = k*l, 2*r, 2*c
+            sub_square = input_array[ n, l_in:l_in+k, r_in:r_in+2, c_in:c_in+2, ch ]
+            max_pos_l, max_pos_r, max_pos_c = np.unravel_index(np.nanargmax(sub_square), (k, 2, 2))
+            array_pixel = output_array[ n, l, r, c, ch ]
+            unpool_array[n, l_in + max_pos_l, r_in + max_pos_r, c_in + max_pos_c, ch] = array_pixel
+  unpool = tf.convert_to_tensor(unpool_array)
+
+  return unpool
+
+
+
+
 
 def placeholder_inputs(batch_size):
   """Generate placeholder variables to represent the input tensors.
@@ -118,7 +156,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
   return var
 
 def run_test():
-  model_name = "./models/pbd_avgpool_model-400"
+  model_name = "./models/c3d_ucf_model-200"
   test_list_file = 'list/predict_test.txt'
   num_test_videos = len(list(open(test_list_file,'r')))
   print("Number of test videos={}".format(num_test_videos))
@@ -160,41 +198,34 @@ def run_test():
   # Convolution Layer
   conv1 = conv3d('conv1', _X, _weights['wc1'], _biases['bc1'])
   conv1 = tf.nn.relu(conv1, 'relu1')
-  #pool1 = max_pool('pool1', conv1, k=1)
-  pool1 = avg_pool('pool1', conv1, k=1)
-  
+  pool1 = max_pool('pool1', conv1, k=1)
+    
   # Convolution Layer
   conv2 = conv3d('conv2', pool1, _weights['wc2'], _biases['bc2'])
   conv2 = tf.nn.relu(conv2, 'relu2')
-  #pool2 = max_pool('pool2', conv2, k=2)
-  pool2 = avg_pool('pool2', conv2, k=2)
-
+  pool2 = max_pool('pool2', conv2, k=2)
+  
   # Convolution Layer
   conv3 = conv3d('conv3a', pool2, _weights['wc3a'], _biases['bc3a'])
   conv3 = tf.nn.relu(conv3, 'relu3a')
   conv3 = conv3d('conv3b', conv3, _weights['wc3b'], _biases['bc3b'])
   conv3 = tf.nn.relu(conv3, 'relu3b')
-  #pool3 = max_pool('pool3', conv3, k=2)
-  pool3 = avg_pool('pool3', conv3, k=2)
-
+  pool3 = max_pool('pool3', conv3, k=2)
+  
   # Convolution Layer
   conv4 = conv3d('conv4a', pool3, _weights['wc4a'], _biases['bc4a'])
   conv4 = tf.nn.relu(conv4, 'relu4a')
   conv4 = conv3d('conv4b', conv4, _weights['wc4b'], _biases['bc4b'])
   conv4 = tf.nn.relu(conv4, 'relu4b')
-  #pool4 = max_pool('pool4', conv4, k=2)
-  pool4 = avg_pool('pool4', conv4, k=2)
-
+  pool4 = max_pool('pool4', conv4, k=2)
+  
   # Convolution Layer
   conv5 = conv3d('conv5a', pool4, _weights['wc5a'], _biases['bc5a'])
   conv5 = tf.nn.relu(conv5, 'relu5a')
   conv5 = conv3d('conv5b', conv5, _weights['wc5b'], _biases['bc5b'])
   conv5 = tf.nn.relu(conv5, 'relu5b')
-  #pool5 = max_pool('pool5', conv5, k=2)
-  pool5 = avg_pool('pool5', conv5, k=2)
-
-  
-
+  pool5 = max_pool('pool5', conv5, k=2)
+    
   # Fully connected layer
   pool5 = tf.transpose(pool5, perm=[0,1,4,2,3])
   dense1 = tf.reshape(pool5, [batch_size, _weights['wd1'].get_shape().as_list()[0]]) # Reshape conv3 output to fit dense layer input
@@ -257,29 +288,36 @@ def run_test():
 
     # # Deconvolution Layer
     # deconv2 = un_avg_pool('depool2', pool2, k=2, images_placeholder = images_placeholder, test_images = test_images)
-    # deconv2 = tf.nn.relu(deconv2, 'derelu2')
-    # depool1 = conv3d_transpose('deconv2', deconv2, _weights['wc2'], _biases['bc2'], [1,16,56,56,64])
+    deconv2 = tf.nn.relu(conv2, 'derelu2')
+    depool1 = conv3d_transpose('deconv2', deconv2, _weights['wc2'], _biases['bc2'], [1,16,56,56,64])
 
-    # # Deconvolution Layer
-    # deconv1 = un_avg_pool('depool1', depool1, k=1, images_placeholder = images_placeholder, test_images = test_images)
-    # deconv1 = tf.nn.relu(deconv1, 'derelu1')
-    # deconv1 = conv3d_transpose('deconv1', deconv1, _weights['wc1'], _biases['bc1'], [1,16,112,112,3])
+    # Deconvolution Layer
+    deconv1 = un_max_pool('depool1', conv1, depool1, k=1, images_placeholder = images_placeholder, test_images = test_images)
+    deconv1 = tf.nn.relu(deconv1, 'derelu1')
+    deconv1 = conv3d_transpose('deconv1', deconv1, _weights['wc1'], _biases['bc1'], [1,16,112,112,3])
 
     #print(conv5.get_shape())
-    conv5_show = pool2.eval(session = sess,feed_dict={images_placeholder: test_images})
-    #conv5_show = np.sum(conv5_show,axis = 4)
-    print(conv5_show.shape)    
-    h_conv5 = conv5_show[:,5,:,:,10]
-    h_conv5 = np.asmatrix(h_conv5)
-    h_conv5 = h_conv5*255.0/h_conv5.max() #normalize
-    h_conv5 = Image.fromarray(h_conv5)
-    h_conv5.show()
+    # shape of pool3:1 4 14 14 256
+    pool3_show = deconv1.eval(session = sess,feed_dict={images_placeholder: test_images})
+    print("the shape of pool3 is:{}".format(pool3_show.shape))    
+    tempMat = np.reshape(pool3_show[:,10,:,:,:], (112,112,3))
+    plt.imshow(tempMat)
+    plt.show()
+    
+    # save images get by pool3
+    # #print(conv5.get_shape())
+    # # shape of pool3:1 4 14 14 256
+    # pool3_show = pool3.eval(session = sess,feed_dict={images_placeholder: test_images})
+    # print("the shape of pool3 is:{}".format(pool3_show.shape))    
+    # for ch in range(pool3_show.shape[4]):
+    #   tempMat = np.asmatrix(pool3_show[:,1,:,:,ch])
+    #   plt.imsave("output/pool3/{:0>6d}.jpg".format(ch), tempMat)
 
-    #deconv5.eval(session = sess,feed_dict={images_placeholder: test_images})
     predict_score = norm_score.eval(
             session=sess,
             feed_dict={images_placeholder: test_images}
             )
+    
     for i in range(0, valid_len):
       true_label = test_labels[i],
       top1_predicted_label = np.argmax(predict_score[i])

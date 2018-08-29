@@ -105,14 +105,16 @@ def inference_c3d(_X, _dropout, batch_size, _weights, _biases):
     out = tf.matmul(dense2, _weights['out_changed']) + _biases['out_changed']
 
     global layers
+    layers['input'] = _X
     layers['conv1'] = conv1
     layers['conv2'] = conv2
     layers['conv3'] = conv3
     layers['conv4'] = conv4
     layers['conv_out'] = conv4
     layers['pool5'] = pool5
+    layers['output'] = out
 
-  return out, conv5
+  return out
 
 def inference_c3d_full_conv(_X, _dropout, batch_size, _weights, _biases):
   with tf.device('/gpu:0'):

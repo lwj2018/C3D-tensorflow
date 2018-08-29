@@ -20,6 +20,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os.path
+import os
 import time
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
@@ -32,100 +33,11 @@ import cv2 as cv
 import numpy as np
 from skimage.transform import resize
 from skimage import io
-
-from guided_backpro import GuideBackPro
-
-from tensorcv.utils.viz import image_overlay, save_merge_images
 from scipy import misc
-from guided_backpro import global_avg_pool
-from itertools import count
-from utils.viz import image_weight_mask
-
-class BaseGradCAM(object):
-    def __init__(self, _weights, _biases, vis_model=None, num_channel=3):
-        self._vis_model = vis_model
-        self._nchannel = num_channel
-        self._weights = _weights
-        self._biases = _biases
-
-    def create_model(self, inputs):
-        self._vis_model.inference_c3d_full_conv(inputs, 1, 1, self._weights, self._biases)
-
-    def _create_model(self, inputs):
-        pass
-
-    def setup_graph(self):
-        pass
-
-    def _comp_feature_importance_weight(self, class_id):
-        if not isinstance(class_id, list):
-            class_id = [class_id]
-
-        with tf.name_scope('feature_weight'):
-            self._feature_w_list = []
-            for idx, cid in enumerate(class_id):
-                one_hot = tf.sparse_to_dense(
-                    [[cid, 0]], [self._nclass, 1], 1.0)
-                out_act = tf.reshape(self._out_act, [1, self._nclass])
-                class_act = tf.matmul(out_act, one_hot,
-                                      name='class_act_{}'.format(idx))
-                feature_grad = tf.gradients(class_act, self._conv_out,
-                                            name='grad_{}'.format(idx))    #[ [1,2,7,7,512] ]    
-                feature_grad = tf.squeeze(
-                    tf.convert_to_tensor(feature_grad), axis=0)
-                feature_w = global_avg_pool(
-                    feature_grad, name='feature_w_{}'.format(idx))      #[1,512]    
-                self._feature_w_list.append(feature_w)
-
-    def get_visualization(self, class_id=None):
-        assert class_id is not None, 'class_id cannot be None!'
-
-        with tf.name_scope('grad_cam'):
-            self._comp_feature_importance_weight(class_id)
-            conv_out = self._conv_out
-            conv_shape = conv_out.shape.as_list()
-            conv_c = tf.shape(conv_out)[-1]
-            conv_l = conv_shape[1]
-            conv_h = tf.shape(conv_out)[2]
-            conv_w = tf.shape(conv_out)[3]
-            #conv_reshape = tf.reshape(conv_out, [conv_l * conv_h * conv_w, conv_c])
-
-            o_l = tf.shape(self.input_im)[1]
-            o_h = tf.shape(self.input_im)[2]
-            o_w = tf.shape(self.input_im)[3]
-
-            classmap_list = []
-            for idx, feature_w in enumerate(self._feature_w_list):
-                feature_w = tf.reshape(feature_w, [conv_c, 1])
-                classmap_seq = []
-                for l in range(conv_l):
-                    conv_image = conv_out[0,l,:,:,:]   # get the l-th image in the feature map seq
-                    conv_reshape = tf.reshape(conv_image, [conv_h * conv_w, conv_c])
-                    classmap = tf.matmul(conv_reshape, feature_w)
-                    classmap = tf.reshape(classmap, [-1, conv_h, conv_w, 1])
-                    classmap = tf.nn.relu(
-                        tf.image.resize_bilinear(classmap, [o_h, o_w]),
-                        name='grad_cam_{}'.format(idx))
-                    classmap_seq.append(tf.squeeze(classmap)) 
-                    # finally the shape of classmap is[o_h, o_w] 
-                classmap_list.append(classmap_seq)
-
-            return classmap_list, tf.convert_to_tensor(class_id)
-
-
-class ClassifyGradCAM(BaseGradCAM):
-    def _create_model(self, inputs):
-        keep_prob = 1
-        self._vis_model.create_model([inputs, keep_prob])
-
-    def setup_graph(self):
-        self.input_im = self._vis_model.layers['input']
-        self._out_act = self._vis_model.layers['output']
-        self._conv_out = self._vis_model.layers['conv_out']
-        self._nclass = self._out_act.shape.as_list()[-1]
-        self.pre_label = tf.nn.top_k(tf.nn.softmax(self._out_act),
-                                     k=5, sorted=True)
-
+import scipy.io
+from guided_backpro import GuideBackPro
+#from grad_cam import ClassifyGradCAM
+#import math
 
 # Basic model parameters as external flags.
 flags = tf.app.flags
@@ -185,7 +97,7 @@ def _variable_with_weight_decay(name, shape, wd):
     tf.add_to_collection('losses', weight_decay)
   return var
 
-def grad_cam(predicted_class, images_placeholder, test_images, conv_layer, fc_layer, nb_classes = 6 ):
+def grad_cam(predicted_class, images_placeholder, test_images, conv_layer, fc_layer, nb_classes = 101 ):
   print("Setting gradients to 1 for target class and rest to 0")
   # Conv layer tensor [?,2,7,7,512]
   # [101] 1D tensor with target class index set to 1 and rest to 0
@@ -228,27 +140,8 @@ def grad_cam(predicted_class, images_placeholder, test_images, conv_layer, fc_la
 
   return  new_cam3
 
-def get_guided_back_pro(predicted_class, images_placeholder, test_images, conv_layer, fc_layer, nb_classes = 6 ):
-  print("start get guided back pro")
-  # Conv layer tensor [?,2,7,7,512]
-  # [101] 1D tensor with target class index set to 1 and rest to 0
-  one_hot = tf.sparse_to_dense(predicted_class, [nb_classes], 1.0)
-  signal = tf.multiply(fc_layer, one_hot)
-  loss = tf.reduce_mean(signal)
-
-  back_pro_input = sess.run(tf.gradients(loss, images_placeholder)[0], feed_dict = {images_placeholder: test_images})
-  print('the shape of back_pro_input is: ',back_pro_input.shape)
-
-  back_pro_image = np.reshape(back_pro_input[0,10,:,:,:],(112,112,3))
-  plt.imshow(back_pro_image)
-  plt.show()
-
-  return back_pro_input
-
 def run_test():
-  SAVE_PATH = "output/grad_cam"
-  grid_size = 4
-  LENGTH = 16
+  SAVE_PATH = "output/guided_backpro"
   model_name = "/media/storage/liweijie/c3d_models/pbd_fcn_model-1000"
   test_list_file = 'list/predict_test.txt'
   num_test_videos = len(list(open(test_list_file,'r')))
@@ -287,7 +180,20 @@ def run_test():
               }
 
   batch_size = FLAGS.batch_size
-  with tf.device('/gpu:0'):
+  with tf.device('/cpu:0'):
+    out = c3d_model.inference_c3d_full_conv(
+                images_placeholder[:,:,:,:,:],
+                1,
+                FLAGS.batch_size,
+                weights,
+                biases
+                )
+  
+    logits = []
+        
+    logits.append(out)
+    logits = tf.concat(logits,0)
+    norm_score = tf.nn.softmax(logits)
     saver = tf.train.Saver()
     #sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
     
@@ -298,17 +204,8 @@ def run_test():
     # And then after everything is built, start the training loop.
     bufsize = 0
     next_start_pos = 0
-
-    # -----------------GRAD_CAM(setup)-------------
-    print("\033[0;31m start the setup operation \033[0m")
-    # create model 
-    gcam = ClassifyGradCAM(weights, biases, vis_model = c3d_model)
-    gbackprob = GuideBackPro(weights, biases, vis_model = c3d_model)
-    gcam.create_model(images_placeholder)
-    gcam.setup_graph()
-    
+    #all_steps = int((num_test_videos - 1) / (FLAGS.batch_size * gpu_num) + 1)
     all_steps = 6
-    o_im_list = []
     for step in xrange(all_steps):
       # Fill a feed dictionary with the actual set of images and labels
       # for this particular training step.
@@ -319,56 +216,25 @@ def run_test():
                       FLAGS.batch_size * gpu_num,
                       start_pos=next_start_pos
                       )
+                      
+      label = step
+      length = 16
+      # guided_backpro
+      model = GuideBackPro(weights, biases, vis_model = c3d_model)
+      back_pro_op = model.get_visualization(images_placeholder)
+      guided_backpro = sess.run(back_pro_op, feed_dict = {images_placeholder: test_images})
+      guided_backpro_img = guided_backpro[0][0][0]
 
-      
-      # -------------------GRAD_CAM(execute)---------------------
-      class_id = [ step ]
-      # generate class map and prediction label ops
-      map_op = gcam.get_visualization(class_id = class_id)
-      label_op = gcam.pre_label
+      print("the shape of guided_backpro_img is:", guided_backpro_img.shape)
+      print("max of img is:",np.max(guided_backpro_img))
+      guided_backpro_img = guided_backpro_img / np.max(guided_backpro_img)
 
-      back_pro_op = gbackprob.get_visualization(images_placeholder)
-      # execute the ops
-      # gcam_map = [ [class_seq], [class_id] ] , in which
-      # class_seq is a list of class_map
-      # the shape of o_im is NLHWC
-      gcam_map, b_map, label, o_im = \
-        sess.run([map_op, back_pro_op, label_op, gcam.input_im], feed_dict = {images_placeholder: test_images})
-      o_im_list.extend(o_im)
-      cnt = 0
-      for idx, cid, cmaps in zip(count(), gcam_map[1], gcam_map[0]):
-        overlay_im_list = []
-        weight_im_list = []
-        cmaps_length = len(cmaps)
-        stride = int(LENGTH/cmaps_length)
-        for l in range(LENGTH):
-          cmap = cmaps[int(l/stride)]
-          overlay_im = image_overlay(cmap, o_im[:,l,:,:,:])
-          weight_im = image_weight_mask(b_map[0][0][0][:,l,:,:,:], cmap)
-          overlay_im_list.append(overlay_im)
-          weight_im_list.append(weight_im)
-        cnt += 1
-        save_path = "{}/class_{}_gradcam_{}.png".format(SAVE_PATH,cid, cnt)
-        save_merge_images(np.array(overlay_im_list), [grid_size,grid_size], save_path)
-        save_path = "{}/class_{}_guided_gradcam_{}.png".format(SAVE_PATH,cid, cnt)
-        save_merge_images(np.array(weight_im_list), [grid_size,grid_size], save_path)
-
-      # # grad_cam
-      # label = step
-      # cam3 = grad_cam(label, images_placeholder, test_images, c3d_model.layers['conv4'], out, nb_classes = 6 )
-      # for l in range(cam3.shape[0]):
-      #   tempImg = np.reshape(test_images[0,l,:,:,:],(112,112,3))
-      #   #print("the minimum of image is : {}".format(tempImg.min()))
-      #   tempImg /= np.abs(tempImg).max()
-      #   tempImg = tempImg.astype(np.float32)
-
-      #   new_img = tempImg + cam3[l]
-      #   new_img /= np.abs(new_img).max()   
-      #   # print("the max of cam is : ",np.max(cam3[l]))   
-
-      #   #Dislay and save
-      #   io.imsave("output/grad_cam/{}/{:0>6d}.jpg".format(label,l+1), new_img)
-
+      make_path = "{}/{}".format(SAVE_PATH, label)
+      if not os.path.exists(make_path):
+        os.makedirs(make_path)
+      for l in range(length):
+        misc.imsave("{}/{}/{}.jpg".format(SAVE_PATH,label,l), np.reshape(guided_backpro_img[0,l,:,:,:], [112,112,3]))
+      #plt.show()
 
     print("done")
 

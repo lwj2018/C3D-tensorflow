@@ -68,8 +68,8 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
   return var
 
 def run_test():
-  model_name = "./sports1m_finetuning_ucf101.model"
-  test_list_file = 'list/test.list'
+  model_name = "./models/pbd_avgpool_model-200"
+  test_list_file = 'list/test_list.txt'
   num_test_videos = len(list(open(test_list_file,'r')))
   print("Number of test videos={}".format(num_test_videos))
 
@@ -105,7 +105,7 @@ def run_test():
   logits = []
   for gpu_index in range(0, gpu_num):
     with tf.device('/gpu:%d' % gpu_index):
-      logit = c3d_model.inference_c3d(images_placeholder[gpu_index * FLAGS.batch_size:(gpu_index + 1) * FLAGS.batch_size,:,:,:,:], 0.6, FLAGS.batch_size, weights, biases)
+      logit,_ = c3d_model.inference_c3d(images_placeholder[gpu_index * FLAGS.batch_size:(gpu_index + 1) * FLAGS.batch_size,:,:,:,:], 0.6, FLAGS.batch_size, weights, biases)
       logits.append(logit)
   logits = tf.concat(logits,0)
   norm_score = tf.nn.softmax(logits)

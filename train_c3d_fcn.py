@@ -35,7 +35,7 @@ flags.DEFINE_integer('max_steps', 5000, 'Number of steps to run trainer.')
 flags.DEFINE_integer('batch_size', 20, 'Batch size.')
 FLAGS = flags.FLAGS
 MOVING_AVERAGE_DECAY = 0.9999
-model_save_dir = './models'
+model_save_dir = '/media/storage/liweijie/c3d_models'
 
 def placeholder_inputs(batch_size):
   """Generate placeholder variables to represent the input tensors.
@@ -97,7 +97,7 @@ def tower_acc(logit, labels):
   return accuracy
 
 def _variable_on_cpu(name, shape, initializer):
-  with tf.device('/cpu:0'):
+  with tf.device('/gpu:0'):
     var = tf.get_variable(name, shape, initializer=initializer)
   return var
 
@@ -116,7 +116,7 @@ def run_training():
   if not os.path.exists(model_save_dir):
       os.makedirs(model_save_dir)
   use_pretrained_model = True 
-  model_filename = "./sports1m_finetuning_ucf101.model"
+  model_filename = "./pbd_maxpool_model-600"
 
   with tf.Graph().as_default():
     global_step = tf.get_variable(
@@ -131,7 +131,7 @@ def run_training():
     tower_grads1 = []
     tower_grads2 = []
     logits = []
-    opt_stable = tf.train.AdamOptimizer(1e-4)
+    opt_stable = tf.train.AdamOptimizer(0)
     opt_finetuning = tf.train.AdamOptimizer(1e-3)
     with tf.variable_scope('var_name') as var_scope:
       weights = {
@@ -143,10 +143,10 @@ def run_training():
               'wc4b': _variable_with_weight_decay('wc4b', [3, 3, 3, 512, 512], 0.0005),
               'wc5a': _variable_with_weight_decay('wc5a', [3, 3, 3, 512, 512], 0.0005),
               'wc5b': _variable_with_weight_decay('wc5b', [3, 3, 3, 512, 512], 0.0005),
-              'wd1': _variable_with_weight_decay('wd1', [8192, 4096], 0.0005),
-              'wd2': _variable_with_weight_decay('wd2', [4096, 4096], 0.0005),
+              'w1': _variable_with_weight_decay('w1', [1, 4, 4, 512, 4096], 0.0005),
+              'w2': _variable_with_weight_decay('w2', [1, 1, 1, 4096, 4096], 0.0005),
               #'out': _variable_with_weight_decay('wout', [4096, c3d_model.NUM_CLASSES], 0.0005)
-              'out_changed':_variable_with_weight_decay('wout', [4096, c3d_model.NUM_CLASSES], 0.0005)
+              'out_fcn':_variable_with_weight_decay('wout', [1, 1, 1, 4096, c3d_model.NUM_CLASSES], 0.0005)
               }
       biases = {
               'bc1': _variable_with_weight_decay('bc1', [64], 0.000),
@@ -157,17 +157,17 @@ def run_training():
               'bc4b': _variable_with_weight_decay('bc4b', [512], 0.000),
               'bc5a': _variable_with_weight_decay('bc5a', [512], 0.000),
               'bc5b': _variable_with_weight_decay('bc5b', [512], 0.000),
-              'bd1': _variable_with_weight_decay('bd1', [4096], 0.000),
-              'bd2': _variable_with_weight_decay('bd2', [4096], 0.000),
+              'b1': _variable_with_weight_decay('b1', [4096], 0.000),
+              'b2': _variable_with_weight_decay('b2', [4096], 0.000),
               #'out': _variable_with_weight_decay('bout', [c3d_model.NUM_CLASSES], 0.000),
-              'out_changed':_variable_with_weight_decay('bout', [c3d_model.NUM_CLASSES], 0.0005)
+              'out_fcn':_variable_with_weight_decay('bout', [c3d_model.NUM_CLASSES], 0.0005)
               }
     for gpu_index in range(0, gpu_num):
       with tf.device('/gpu:%d' % gpu_index):
         
-        varlist2 = [ weights['out_changed'],biases['out_changed'] ]
+        varlist2 = [ weights['w1'],weights['w2'],weights['out_fcn'],biases['b1'],biases['b2'],biases['out_fcn'] ]
         varlist1 = list( set(weights.values() + biases.values()) - set(varlist2) )
-        logit,_ = c3d_model.inference_c3d(
+        logit = c3d_model.inference_c3d_full_conv(
                         images_placeholder[gpu_index * FLAGS.batch_size:(gpu_index + 1) * FLAGS.batch_size,:,:,:,:],
                         0.5,
                         FLAGS.batch_size,
@@ -232,7 +232,7 @@ def run_training():
 
       # Save a checkpoint and evaluate the model periodically.
       if (step) % 200 == 0 or (step + 1) == FLAGS.max_steps:
-        mySaver.save(sess, os.path.join(model_save_dir, 'pbd_maxpool_model'), global_step=step)
+        mySaver.save(sess, os.path.join(model_save_dir, 'pbd_fcn_model'), global_step=step)
         print('Training Data Eval:')
         summary, acc = sess.run(
                         [merged, accuracy],

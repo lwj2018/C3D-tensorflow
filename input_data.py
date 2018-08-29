@@ -27,22 +27,18 @@ import numpy as np
 import cv2
 import time
 
-def get_frames_data(filename, num_frames_per_clip=16):
+total_index = 0
+
+def get_frames_data(filename, start_frame, num_frames_per_clip=16):
   ''' Given a directory containing extracted frames, return a video clip of
   (num_frames_per_clip) consecutive frames as a list of np arrays '''
   ret_arr = []
-  s_index = 0
-  for parent, dirnames, filenames in os.walk(filename):
-    if(len(filenames)<num_frames_per_clip):
-      return [], s_index
-    filenames = sorted(filenames)
-    s_index = random.randint(0, len(filenames) - num_frames_per_clip)
-    for i in range(s_index, s_index + num_frames_per_clip):
-      image_name = str(filename) + '/' + str(filenames[i])
-      img = Image.open(image_name)
-      img_data = np.array(img)
-      ret_arr.append(img_data)
-  return ret_arr, s_index
+  for i in range(start_frame, start_frame + num_frames_per_clip):
+    image_name = '/home/liweijie/C3D/C3D-v1.0/examples/c3d_finetuning/'+str(filename) + '/' + '%06d.jpg' % i
+    img = Image.open(image_name)
+    img_data = np.array(img)
+    ret_arr.append(img_data)
+  return ret_arr
 
 def read_clip_and_label(filename, batch_size, start_pos=-1, num_frames_per_clip=16, crop_size=112, shuffle=False):
   lines = open(filename,'r')
@@ -58,21 +54,34 @@ def read_clip_and_label(filename, batch_size, start_pos=-1, num_frames_per_clip=
     shuffle = True
   if shuffle:
     video_indices = range(len(lines))
-    random.seed(time.time())
+    #random.seed(time.time())
     random.shuffle(video_indices)
   else:
     # Process videos sequentially
     video_indices = range(start_pos, len(lines))
-  for index in video_indices:
+    total_index = 0
+  global total_index
+  # prevent from sample_index out of list , restart from the head
+  if total_index + batch_size > len(lines):
+    total_index = 0 
+
+  for index in video_indices[total_index:]:  
     if(batch_index>=batch_size):
       next_batch_start = index
       break
     line = lines[index].strip('\n').split()
     dirname = line[0]
-    tmp_label = line[1]
+    start_frame = int(line[1])
+
+    # DEBUG
+    if(batch_index == 0):
+      print("read clip from: {}  {}".format(dirname, start_frame))
+
+    if(len(line)!=3): print("readed line:"+line)
+    tmp_label = line[2]
     if not shuffle:
       print("Loading a video clip from {}...".format(dirname))
-    tmp_data, _ = get_frames_data(dirname, num_frames_per_clip)
+    tmp_data = get_frames_data(dirname, start_frame, num_frames_per_clip)
     img_datas = [];
     if(len(tmp_data)!=0):
       for j in xrange(len(tmp_data)):
@@ -85,11 +94,13 @@ def read_clip_and_label(filename, batch_size, start_pos=-1, num_frames_per_clip=
           img = np.array(cv2.resize(np.array(img),(crop_size, int(img.height * scale + 1)))).astype(np.float32)
         crop_x = int((img.shape[0] - crop_size)/2)
         crop_y = int((img.shape[1] - crop_size)/2)
-        img = img[crop_x:crop_x+crop_size, crop_y:crop_y+crop_size,:] - np_mean[j]
+        #img = img[crop_x:crop_x+crop_size, crop_y:crop_y+crop_size,:] - np_mean[j]
+        img = img[crop_x:crop_x+crop_size, crop_y:crop_y+crop_size,:]
         img_datas.append(img)
       data.append(img_datas)
       label.append(int(tmp_label))
       batch_index = batch_index + 1
+      total_index = total_index + 1
       read_dirnames.append(dirname)
 
   # pad (duplicate) data/label if less than batch_size

@@ -1,0 +1,6 @@
+input/processed_frm/0_1 1 1
+input/processed_frm/1_1 1 1
+input/processed_frm/2_1 1 1
+input/processed_frm/3_1 1 1
+input/processed_frm/4_1 1 1
+input/processed_frm/5_0 1 1
